@@ -2,6 +2,7 @@
   "expo": {
     "name": "expense-tracker",
     "slug": "expense-tracker",
+    "owner": "michelleconchinas-team",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -21,6 +22,11 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "5f93b843-5ab0-4df9-a817-e33be891a08b"
+      }
     }
   }
 }
