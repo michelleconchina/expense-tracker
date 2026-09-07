@@ -1,84 +1,202 @@
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useState } from 'react';
-import { FlatList, SafeAreaView, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  ActivityIndicator,
+  SafeAreaView,
+  SectionList,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
+import { AddExpenseForm } from './components/AddExpenseForm';
+import { ExpenseRow } from './components/ExpenseRow';
+import { DayTotal, WeekTrend } from './components/WeekTrend';
 import { API_BASE_URL } from './config';
-import { Expense } from './types';
+import { Expense, ExpenseSummary, NewExpense } from './types';
+
+const today = new Date().toISOString().slice(0, 10);
+
+function groupByDay(expenses: Expense[]) {
+  const byDate = new Map<string, Expense[]>();
+  for (const expense of expenses) {
+    const group = byDate.get(expense.date) ?? [];
+    group.push(expense);
+    byDate.set(expense.date, group);
+  }
+  return Array.from(byDate.entries())
+    .sort(([a], [b]) => (a < b ? 1 : -1))
+    .map(([date, data]) => ({
+      title: date,
+      total: data.reduce((sum, e) => sum + e.amount, 0),
+      data,
+    }));
+}
+
+function lastSevenDays(expenses: Expense[]): DayTotal[] {
+  const days: DayTotal[] = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const date = d.toISOString().slice(0, 10);
+    const total = expenses
+      .filter((e) => e.date === date)
+      .reduce((sum, e) => sum + e.amount, 0);
+    days.push({ date, total });
+  }
+  return days;
+}
 
 export default function App() {
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [todayTotal, setTodayTotal] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetch(`${API_BASE_URL}/api/expenses`)
+  const loadExpenses = useCallback(() => {
+    return fetch(`${API_BASE_URL}/api/expenses`)
       .then((response) => response.json())
-      .then(setExpenses)
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
+      .then(setExpenses);
   }, []);
 
+  const loadTodayTotal = useCallback(() => {
+    return fetch(`${API_BASE_URL}/api/expenses/summary?date=${today}`)
+      .then((response) => response.json())
+      .then((summary: ExpenseSummary) => setTodayTotal(summary.total));
+  }, []);
+
+  useEffect(() => {
+    Promise.all([loadExpenses(), loadTodayTotal()])
+      .catch((err) => setError(err.message))
+      .finally(() => setLoading(false));
+  }, [loadExpenses, loadTodayTotal]);
+
+  function handleAdd(newExpense: NewExpense) {
+    fetch(`${API_BASE_URL}/api/expenses`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newExpense),
+    })
+      .then(() => Promise.all([loadExpenses(), loadTodayTotal()]))
+      .catch((err) => setError(err.message));
+  }
+
+  function handleDelete(id: number) {
+    fetch(`${API_BASE_URL}/api/expenses/${id}`, { method: 'DELETE' })
+      .then(() => Promise.all([loadExpenses(), loadTodayTotal()]))
+      .catch((err) => setError(err.message));
+  }
+
+  const sections = useMemo(() => groupByDay(expenses), [expenses]);
+  const weekTrend = useMemo(() => lastSevenDays(expenses), [expenses]);
+
   return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar style="auto" />
-      <Text style={styles.title}>Expenses</Text>
-      {loading && <Text style={styles.message}>Loading...</Text>}
-      {error && <Text style={styles.message}>Error: {error}</Text>}
-      <FlatList
-        data={expenses}
-        keyExtractor={(item) => String(item.id)}
-        renderItem={({ item }) => (
-          <View style={styles.row}>
-            <View>
-              <Text style={styles.description}>{item.description}</Text>
-              <Text style={styles.category}>
-                {item.category} · {item.date}
-              </Text>
-            </View>
-            <Text style={styles.amount}>${item.amount.toFixed(2)}</Text>
+    <GestureHandlerRootView style={styles.flex}>
+      <SafeAreaView style={styles.container}>
+        <StatusBar style="auto" />
+        <Text style={styles.title}>Expenses</Text>
+        <Text style={styles.total}>
+          Today: {todayTotal !== null ? `₱${todayTotal.toFixed(2)}` : '—'}
+        </Text>
+
+        {!loading && <WeekTrend days={weekTrend} />}
+
+        <AddExpenseForm onSubmit={handleAdd} />
+
+        {error && <Text style={styles.errorMessage}>Error: {error}</Text>}
+
+        {loading ? (
+          <View style={styles.centered}>
+            <ActivityIndicator color="#2E6F5C" />
           </View>
+        ) : (
+          <SectionList
+            sections={sections}
+            keyExtractor={(item) => String(item.id)}
+            renderItem={({ item }) => (
+              <ExpenseRow expense={item} onDelete={handleDelete} />
+            )}
+            renderSectionHeader={({ section }) => (
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>{section.title}</Text>
+                <Text style={styles.sectionTotal}>
+                  ₱{section.total.toFixed(2)}
+                </Text>
+              </View>
+            )}
+            ListEmptyComponent={
+              <View style={styles.centered}>
+                <Text style={styles.emptyText}>No expenses yet.</Text>
+                <Text style={styles.emptySubtext}>
+                  Add your first one above.
+                </Text>
+              </View>
+            }
+            stickySectionHeadersEnabled={false}
+          />
         )}
-        ListEmptyComponent={
-          !loading ? <Text style={styles.message}>No expenses yet.</Text> : null
-        }
-      />
-    </SafeAreaView>
+      </SafeAreaView>
+    </GestureHandlerRootView>
   );
 }
 
 const styles = StyleSheet.create({
+  flex: {
+    flex: 1,
+  },
   container: {
     flex: 1,
     backgroundColor: '#fff',
-    paddingHorizontal: 16,
   },
   title: {
     fontSize: 28,
     fontWeight: '600',
-    marginVertical: 16,
+    marginTop: 16,
+    marginHorizontal: 16,
   },
-  message: {
-    color: '#666',
+  total: {
+    fontSize: 16,
+    color: '#2E6F5C',
+    fontWeight: '600',
+    marginTop: 4,
     marginBottom: 12,
+    marginHorizontal: 16,
   },
-  row: {
+  sectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#ddd',
+    backgroundColor: '#F5F8F6',
+    paddingHorizontal: 16,
+    paddingVertical: 6,
   },
-  description: {
-    fontSize: 16,
-  },
-  category: {
+  sectionTitle: {
     fontSize: 13,
-    color: '#888',
-    marginTop: 2,
-  },
-  amount: {
-    fontSize: 16,
     fontWeight: '600',
+    color: '#55635E',
+  },
+  sectionTotal: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#55635E',
+  },
+  errorMessage: {
+    color: '#C0392B',
+    marginBottom: 12,
+    marginHorizontal: 16,
+  },
+  centered: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 48,
+  },
+  emptyText: {
+    fontSize: 16,
+    color: '#666',
+    marginBottom: 4,
+  },
+  emptySubtext: {
+    fontSize: 13,
+    color: '#999',
   },
 });
